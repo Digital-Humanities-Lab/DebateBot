@@ -1,0 +1,8 @@
+TELEGRAM_BOT_TOKEN=Yout_token_for_telegram_bot
+OPENAI_API_KEY=Your_token_for_openai_api
+DB_NAME=Database_Name
+DB_USER=Database_user
+DB_PASSWORD=Password_for_your_database
+DB_HOST=Database_host
+DB_PORT=5432 #standart_port_for_postgresql_database
+EMAIL_FROM=Email_from_which_messages_are_sent
