@@ -15,11 +15,20 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 config = load_config()
 email_from = config["EMAIL_FROM"]
 
+def load_email_template(file_path, verification_code):
+    """Loads the email template from a file and replaces placeholders."""
+    with open(file_path, 'r') as file:
+        template = file.read()
+
+    # Replace placeholders with actual values
+    return template.replace('{{ verification_code }}', str(verification_code))
+
 def send_email(recipient_email, verification_code):
     """Sends an email with a verification code using Gmail API and OAuth2 credentials."""
     creds = None
     token_path = "token.json"
     credentials_path = "credentials.json"  # Path to your OAuth2 credentials file
+    template_path = "email_template.html"  # Path to your email template file
 
     # Check if token.json exists, if not initiate OAuth2 flow
     if os.path.exists(token_path):
@@ -37,6 +46,9 @@ def send_email(recipient_email, verification_code):
             token_file.write(creds.to_json())
 
     try:
+        # Load the HTML template and replace the placeholder
+        html_body = load_email_template(template_path, verification_code)
+
         # Build the Gmail API service
         service = build('gmail', 'v1', credentials=creds)
 
@@ -45,10 +57,9 @@ def send_email(recipient_email, verification_code):
         message['From'] = email_from  # Use your verified email address
         message['To'] = recipient_email
         message['Subject'] = 'Your Verification Code'
-        
-        # Attach the body with the verification code
-        body = f"Your verification code is: {verification_code}"
-        message.attach(MIMEText(body, 'plain'))
+
+        # Attach the body with the HTML content
+        message.attach(MIMEText(html_body, 'html', 'utf-8'))
 
         # Encode the message in base64 and prepare it for sending
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
@@ -59,5 +70,8 @@ def send_email(recipient_email, verification_code):
         }
         service.users().messages().send(userId="me", body=send_message).execute()
 
+        print(f"Verification email successfully sent to {recipient_email}")
+
     except HttpError as error:
         print(f"An error occurred: {error}")
+        raise Exception(f"Failed to send email: {error}")

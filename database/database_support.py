@@ -20,92 +20,176 @@ def get_db_connection():
         print(f"Error connecting to the database: {e}")
         return None
 
-# Add a new user to the database
-def add_user(user_id, email, verification_code, is_verified=False):
+# Method to create the users table if it doesn't exist
+def create_users_table():
     conn = get_db_connection()
     if conn is None:
-        return False
-    
+        return
     try:
-        with conn.cursor() as cursor:
-            query = sql.SQL("INSERT INTO users (user_id, email, verification_code, is_verified) VALUES (%s, %s, %s, %s)")
-            cursor.execute(query, (user_id, email, verification_code, is_verified))
-        conn.commit()
-        return True
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TYPE IF NOT EXISTS conversation_state_enum AS ENUM (
+                    'AWAITING_EMAIL',
+                    'AWAITING_VERIFICATION_CODE',
+                    'VERIFIED'
+                );
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    email VARCHAR(255),
+                    verification_code INT,
+                    conversation_state conversation_state_enum NOT NULL
+                );
+            """)
+            conn.commit()
     except Exception as e:
-        print(f"Error adding user: {e}")
-        return False
+        print(f"Error creating table: {e}")
     finally:
         conn.close()
 
-# Get user by user_id
-def get_user(user_id):
+
+# Method to insert a new user
+def insert_user(user_id, email, verification_code, conversation_state='AWAITING_EMAIL'):
     conn = get_db_connection()
     if conn is None:
-        return None
-    
+        return
     try:
-        with conn.cursor() as cursor:
-            query = sql.SQL("SELECT * FROM users WHERE user_id = %s")
-            cursor.execute(query, (user_id,))
-            user = cursor.fetchone()
-            return user
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (user_id, email, verification_code, conversation_state)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO NOTHING;
+            """, (user_id, email, verification_code, conversation_state))
+            conn.commit()
     except Exception as e:
-        print(f"Error retrieving user: {e}")
-        return None
+        print(f"Error inserting user: {e}")
     finally:
         conn.close()
 
-# Update user's email
-def update_user_email(user_id, new_email):
+
+# Method to update a user's email and reset verification status
+def update_user_email(user_id, new_email, verification_code):
     conn = get_db_connection()
     if conn is None:
-        return False
-    
+        return
     try:
-        with conn.cursor() as cursor:
-            query = sql.SQL("UPDATE users SET email = %s WHERE user_id = %s")
-            cursor.execute(query, (new_email, user_id))
-        conn.commit()
-        return True
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET email = %s, verification_code = %s, conversation_state = 'AWAITING_VERIFICATION_CODE'
+                WHERE user_id = %s;
+            """, (new_email, verification_code, user_id))
+            conn.commit()
     except Exception as e:
-        print(f"Error updating user email: {e}")
-        return False
+        print(f"Error updating email: {e}")
     finally:
         conn.close()
 
-# Update user's verification status
+
+# Method to update the user's verification status
 def update_user_verification_status(user_id, is_verified):
     conn = get_db_connection()
     if conn is None:
-        return False
-    
+        return
     try:
-        with conn.cursor() as cursor:
-            query = sql.SQL("UPDATE users SET is_verified = %s WHERE user_id = %s")
-            cursor.execute(query, (is_verified, user_id))
-        conn.commit()
-        return True
+        with conn.cursor() as cur:
+            state = 'VERIFIED' if is_verified else 'AWAITING_VERIFICATION_CODE'
+            cur.execute("""
+                UPDATE users
+                SET conversation_state = %s
+                WHERE user_id = %s;
+            """, (state, user_id))
+            conn.commit()
     except Exception as e:
-        print(f"Error updating user verification status: {e}")
+        print(f"Error updating verification status: {e}")
+    finally:
+        conn.close()
+
+# Method to get a user's conversation state
+def get_conversation_state(user_id):
+    conn = get_db_connection()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT conversation_state FROM users WHERE user_id = %s;
+            """, (user_id,))
+            result = cur.fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        print(f"Error fetching conversation state: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_user_email(user_id):
+    conn = get_db_connection()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT email FROM users WHERE user_id = %s;
+            """, (user_id,))
+            result = cur.fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        print(f"Error fetching user email: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+
+# Method to delete a user from the database
+def delete_user(user_id):
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM users WHERE user_id = %s;
+            """, (user_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error deleting user: {e}")
+    finally:
+        conn.close()
+
+
+# Method to check if a user exists
+def user_exists(user_id):
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS(SELECT 1 FROM users WHERE user_id = %s);
+            """, (user_id,))
+            result = cur.fetchone()
+            return result[0] if result else False
+    except Exception as e:
+        print(f"Error checking if user exists: {e}")
         return False
     finally:
         conn.close()
 
-# Set new verification code for a user
-def set_verification_code(user_id, new_code):
+# Method to get the verification code for a user
+def get_verification_code(user_id):
     conn = get_db_connection()
     if conn is None:
-        return False
-    
+        return None
     try:
-        with conn.cursor() as cursor:
-            query = sql.SQL("UPDATE users SET verification_code = %s WHERE user_id = %s")
-            cursor.execute(query, (new_code, user_id))
-        conn.commit()
-        return True
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT verification_code FROM users WHERE user_id = %s;
+            """, (user_id,))
+            result = cur.fetchone()
+            return result[0] if result else None
     except Exception as e:
-        print(f"Error setting verification code: {e}")
-        return False
+        print(f"Error fetching verification code: {e}")
+        return None
     finally:
         conn.close()
