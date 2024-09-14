@@ -1,4 +1,4 @@
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
 from bot.config import load_config
@@ -19,18 +19,35 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
 
     register_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(register, pattern='register'), CallbackQueryHandler(resend_verification, pattern='resend_verification')],
+        entry_points=[CommandHandler("start", start),CommandHandler("change_topic", change_topic), MessageHandler(filters.TEXT & ~filters.COMMAND, start), CallbackQueryHandler(register, pattern='register')],
         states={
+            STARTED: [CallbackQueryHandler(register, pattern='register')],
             AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_email)],
-            AWAITING_VERIFICATION_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_code),
-                                         CallbackQueryHandler(resend_verification, pattern='resend_verification')],
+            AWAITING_VERIFICATION_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, verify_code),
+                CallbackQueryHandler(resend_verification, pattern='resend_verification')],
+            VERIFIED: [
+                CommandHandler("change_topic", change_topic),
+                CommandHandler("change_side", change_side),
+            ],
+            AWAITING_DEBATE_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_topic)],
+            AWAITING_DEBATE_SIDE: [CallbackQueryHandler(change_side)],
+            CHAT_GPT: [
+                CommandHandler("change_topic", change_topic),
+                CommandHandler("change_side", change_side),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, gpt_reply)
+            ]  
         },
-        fallbacks=[MessageHandler(filters.COMMAND, cancel_registration)],
-        per_chat=True  # Ensure conversation is tracked per chat
+        fallbacks=[MessageHandler(filters.COMMAND, stop_registration)],
+        per_chat=True
     )
+
 
     # Register conversation handler
     application.add_handler(register_conv_handler)
+
+    # Add the general text message handler after the conversation handler
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start)) 
 
     # Run the bot
     application.run_polling()
