@@ -70,7 +70,7 @@ def send_email(recipient_email, verification_code):
         }
         service.users().messages().send(userId="me", body=send_message).execute()
 
-        print(f"Verification email successfully sent to {recipient_email}")
+        # print(f"Verification email successfully sent to {recipient_email}")
 
     except HttpError as error:
         print(f"An error occurred: {error}")

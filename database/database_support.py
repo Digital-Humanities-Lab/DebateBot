@@ -4,7 +4,9 @@ from bot.config import load_config
 
 config = load_config()
 
+
 def get_db_connection():
+    """Get a connection to the database."""
     try:
         conn = psycopg2.connect(
             dbname=config["DB_NAME"],
@@ -18,8 +20,9 @@ def get_db_connection():
         print(f"Error connecting to the database: {e}")
         return None
 
-# Create users table
+
 def create_users_table():
+    """Create the users table in the database."""
     conn = get_db_connection()
     if conn is None:
         return
@@ -27,15 +30,15 @@ def create_users_table():
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TYPE IF NOT EXISTS conversation_state_enum AS ENUM (
-                    'STARTED', 'AWAITING_EMAIL', 'AWAITING_VERIFICATION_CODE', 'VERIFIED', 'AWAITING_DEBATE_TOPIC', 'AWAITING_DEBATE_SIDE', CHAT_GPT 
+                    'STARTED', 'AWAITING_EMAIL', 'AWAITING_VERIFICATION_CODE', 'VERIFIED', 'AWAITING_DEBATE_TOPIC', 'AWAITING_DEBATE_SIDE', 'CHAT_GPT' 
                 );
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
                     email VARCHAR(255),
                     verification_code INT,
                     conversation_state conversation_state_enum NOT NULL,
-                    topic VARCHAR(255),  -- To store the debate topic
-                    side VARCHAR(50)     -- To store the user's chosen side (For/Against)
+                    topic VARCHAR(255),
+                    side VARCHAR(50)
                 );
             """)
             conn.commit()
@@ -44,8 +47,9 @@ def create_users_table():
     finally:
         conn.close()
 
-# Insert a new user
+
 def insert_user(user_id, email, verification_code, conversation_state='STARTED', topic=None, side=None):
+    """Insert a new user into the database."""
     conn = get_db_connection()
     if conn is None:
         return
@@ -62,8 +66,9 @@ def insert_user(user_id, email, verification_code, conversation_state='STARTED',
     finally:
         conn.close()
 
-# Update the user's email and verification status
+
 def update_user_email(user_id, new_email, verification_code):
+    """Update the user's email and verification code."""
     conn = get_db_connection()
     if conn is None:
         return
@@ -80,8 +85,9 @@ def update_user_email(user_id, new_email, verification_code):
     finally:
         conn.close()
 
-# Update the user's verification status
-def update_user_verification_status(user_id, verification_status):
+
+def update_user_conversation_state(user_id, conversation_state):
+    """Update the user's conversation state."""
     conn = get_db_connection()
     if conn is None:
         return
@@ -91,15 +97,35 @@ def update_user_verification_status(user_id, verification_status):
                 UPDATE users
                 SET conversation_state = %s
                 WHERE user_id = %s;
-            """, (verification_status, user_id))
+            """, (conversation_state, user_id))
             conn.commit()
     except Exception as e:
-        print(f"Error updating verification status: {e}")
+        print(f"Error updating conversation state: {e}")
     finally:
         conn.close()
 
-# Get the user's conversation state
+
+def reset_user_registration(user_id):
+    """Reset the user's registration data."""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET email = NULL, verification_code = NULL, conversation_state = 'STARTED'
+                WHERE user_id = %s;
+            """, (user_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error resetting user registration: {e}")
+    finally:
+        conn.close()
+
+
 def get_conversation_state(user_id):
+    """Get the user's conversation state."""
     conn = get_db_connection()
     if conn is None:
         return None
@@ -116,8 +142,9 @@ def get_conversation_state(user_id):
     finally:
         conn.close()
 
-# Get the user's email
+
 def get_user_email(user_id):
+    """Get the user's email."""
     conn = get_db_connection()
     if conn is None:
         return None
@@ -134,8 +161,9 @@ def get_user_email(user_id):
     finally:
         conn.close()
 
-# Check if the user exists
+
 def user_exists(user_id):
+    """Check if the user exists."""
     conn = get_db_connection()
     if conn is None:
         return False
@@ -152,8 +180,9 @@ def user_exists(user_id):
     finally:
         conn.close()
 
-# Get the verification code for the user
+
 def get_verification_code(user_id):
+    """Get the verification code for the user."""
     conn = get_db_connection()
     if conn is None:
         return None
@@ -170,7 +199,9 @@ def get_verification_code(user_id):
     finally:
         conn.close()
 
+
 def update_user_debate_info(user_id, topic, side):
+    """Update the user's debate topic and side."""
     conn = get_db_connection()
     if conn is None:
         return
@@ -187,7 +218,9 @@ def update_user_debate_info(user_id, topic, side):
     finally:
         conn.close()
 
+
 def get_user_debate_info(user_id):
+    """Get the user's debate topic and side."""
     conn = get_db_connection()
     if conn is None:
         return None
@@ -201,5 +234,21 @@ def get_user_debate_info(user_id):
     except Exception as e:
         print(f"Error fetching debate info: {e}")
         return None
+    finally:
+        conn.close()
+
+def delete_user_from_db(user_id):
+    """Delete a user from the database."""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM users WHERE user_id = %s;
+            """, (user_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error deleting user: {e}")
     finally:
         conn.close()

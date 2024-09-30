@@ -1,10 +1,10 @@
-import os
+import configparser
 
-# Function to read the configuration from the config.txt file
 def load_config(file_path="config.txt"):
-    config = {}
-    with open(file_path, "r") as f:
-        for line in f:
-            name, value = line.strip().split("=")
-            config[name] = value
-    return config
+    """Function to read the configuration from the config.txt file."""
+    config = configparser.ConfigParser()
+    with open(file_path, 'r') as f:
+        config_string = '[DEFAULT]\n' + f.read()
+    config.read_string(config_string)
+    return config['DEFAULT']
+
