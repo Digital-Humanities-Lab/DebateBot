@@ -736,7 +736,7 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     # Get the prompt and model from the config
     prompt_template = config.get('PROMPT', '')
-    gpt_model = config.get('GPT_MODEL', 'gpt-4')
+    gpt_model = config.get('GPT_MODEL', '')
 
     # Format the prompt with debate_topic and debate_side
     prompt = prompt_template.format(debate_topic=debate_topic, debate_side=debate_side)
