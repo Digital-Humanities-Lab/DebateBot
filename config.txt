@@ -1,0 +1,6 @@
+TELEGRAM_BOT_TOKEN=Yout_token_for_telegram_bot
+OPENAI_API_KEY=Your_token_for_openai_api
+DB_NAME=Database_Name
+EMAIL_FROM=Email_from_which_messages_are_sent
+GPT_MODEL=gpt-4o (or model what you whant to use)
+PROMPT=Initial prompt for bot
