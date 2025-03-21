@@ -36,6 +36,8 @@ from bot.handlers import (
     handle_verified_text,
     global_message_handler,
     delete_user,
+    change_language_command,
+    select_language,
 )
 
 filterwarnings(
@@ -60,38 +62,45 @@ def main() -> None:
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("menu", menu),
-             
+            CommandHandler("language", change_language_command),
             CallbackQueryHandler(register, pattern="^register$"),
         ],
         states={
             STARTED: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 CallbackQueryHandler(register, pattern="^register$"),
                 CallbackQueryHandler(cancel_registration, pattern="^cancel_registration$"),
             ],
             AWAITING_EMAIL: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_email),
                 CallbackQueryHandler(cancel_registration, pattern="^cancel_registration$"),
         ],
             AWAITING_VERIFICATION_CODE: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, verify_code),
                 CallbackQueryHandler(resend_verification, pattern="^resend_verification$"),
                 CallbackQueryHandler(cancel_registration, pattern="^cancel_registration$"),
             ],
             VERIFIED: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 CallbackQueryHandler(change_topic, pattern="^change_topic$"),
                 CallbackQueryHandler(change_side_entry_point, pattern="^change_side$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_verified_text),
             ],
             AWAITING_DEBATE_TOPIC: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_topic),
                 CallbackQueryHandler(cancel_change_topic, pattern="^cancel_change_topic$"),
             ],
             AWAITING_DEBATE_SIDE: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 CallbackQueryHandler(select_side, pattern="^(for|against)$"),
                 CallbackQueryHandler(cancel_change_topic, pattern="^cancel_change_topic$"),
                 CallbackQueryHandler(cancel_change_side, pattern="^cancel_change_side$"),
             ],
             CHAT_GPT: [
+                CallbackQueryHandler(select_language, pattern="^language_(en|ru)$"),
                 CallbackQueryHandler(change_topic, pattern="^change_topic$"),
                 CallbackQueryHandler(change_side_entry_point, pattern="^change_side$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, gpt_reply),

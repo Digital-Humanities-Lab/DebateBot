@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.conversation_store import conversation_history
 from bot.openai_client import openai_client
-from bot.utils import generate_verification_code
+from bot.utils import generate_verification_code, load_messages
 from database.database_support import (
     insert_user,
     user_exists,
@@ -19,6 +19,8 @@ from database.database_support import (
     update_user_debate_info,
     get_user_debate_info,
     delete_user_from_db,
+    update_user_language,
+    get_user_language,
 )
 from mail.mail_confirmation import send_email
 from bot.config import load_config
@@ -51,12 +53,14 @@ async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     text = update.message.text.strip()
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Check if the user exists in the database
     if not user_exists(user_id):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Hi, it looks like you're new here. Use the /start command to register first."
+            text=msgs["not_registered"]
         )
         return
 
@@ -67,14 +71,12 @@ async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     if conversation_state in ("STARTED", "AWAITING_EMAIL", "AWAITING_VERIFICATION_CODE"):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please complete your registration first."
+            text=msgs["complete_registration"]
         )
-
-        # return conversation_state
     elif conversation_state == "VERIFIED":
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please set your debate topic and side using the /menu command."
+            text=msgs["set_topic_side"]
         )
     elif conversation_state == "AWAITING_DEBATE_TOPIC":
         # Delegate to receive_topic function
@@ -82,7 +84,7 @@ async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif conversation_state == "AWAITING_DEBATE_SIDE":
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please choose your side using the buttons."
+            text=msgs["side_prompt"]
         )
     elif conversation_state == "CHAT_GPT":
         # Delegate to gpt_reply function
@@ -90,9 +92,8 @@ async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Sorry, I didn't understand that."
+            text=msgs["error_processing"]
         )
-        
     return conversation_state
 
 
@@ -111,44 +112,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             conversation_state="STARTED",
             topic=None,
             side=None,
+            language=None
         )
 
-        # Send a welcome message with a registration button
-        keyboard = [[InlineKeyboardButton("Register", callback_data="register")]]
+        # Prompt the user to select a language
+        keyboard = [
+            [InlineKeyboardButton("English", callback_data="language_en")],
+            [InlineKeyboardButton("Русский", callback_data="language_ru")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Welcome! You need to register before using the bot. Please click the button below to register.",
+            text="Welcome! Please choose your language:\nДобро пожаловать! Пожалуйста, выберите язык:",
             reply_markup=reply_markup,
         )
         return STARTED
 
     else:
+        # Get user's language
+        language = get_user_language(user_id)
+        msgs = load_messages(language)
+
         # Get the user's conversation state from the database
         conversation_state = get_conversation_state(user_id)
 
         if conversation_state == "STARTED":
             # User already started but not registered
-            keyboard = [[InlineKeyboardButton("Register", callback_data="register")]]
+            keyboard = [[InlineKeyboardButton(msgs["register_button"], callback_data="register")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="You're already started the process. Please register to continue.",
+                text=msgs["register_prompt"],
                 reply_markup=reply_markup,
             )
             return STARTED
 
         elif conversation_state == "AWAITING_EMAIL":
             # Include cancel button
-            keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_registration")]]
+            keyboard = [[InlineKeyboardButton(msgs["cancel_button"], callback_data="cancel_registration")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             # User is awaiting email input
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Please enter your email address. It should be either '@ehu.lt' or '@student.ehu.lt'.",
+                text=msgs["enter_email_prompt"],
                 reply_markup=reply_markup,
             )
             return AWAITING_EMAIL
@@ -156,17 +165,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         elif conversation_state == "AWAITING_VERIFICATION_CODE":
             # User is registered but awaiting verification
             keyboard = [
-                [InlineKeyboardButton("Resend verification email", callback_data="resend_verification")],
-                [InlineKeyboardButton("Cancel", callback_data="cancel_registration")],
+                [InlineKeyboardButton(msgs["resend_verification"], callback_data="resend_verification")],
+                [InlineKeyboardButton(msgs["cancel_button"], callback_data="cancel_registration")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
+            email = get_user_email(user_id)
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=(
-                    "You're registered but haven't verified your email. Please enter the verification code "
-                    "sent to your email, or click the button below to resend the code."
-                ),
+                text=msgs["verification_sent"].format(email=email),
                 reply_markup=reply_markup,
             )
             return AWAITING_VERIFICATION_CODE
@@ -175,7 +181,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # User is registered and verified
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Welcome back! You're verified and can continue using the bot. Use /menu to change topic or side.",
+                text=msgs["welcome_back"],
             )
             return VERIFIED
 
@@ -183,7 +189,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # User is awaiting debate topic
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Please type your debate topic.",
+                text=msgs["topic_prompt"],
             )
             return AWAITING_DEBATE_TOPIC
 
@@ -191,7 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # User is awaiting debate side
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Please choose your side in the debate.",
+                text=msgs["side_prompt"],
             )
             return AWAITING_DEBATE_SIDE
 
@@ -199,38 +205,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # User can use the GPT chat
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="You can use the bot now! Use /menu to change topic or side.",
+                text=msgs["you_can_use_bot"],
             )
             return CHAT_GPT
-
-
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handler for the registration process."""
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    await query.answer()
-
-    # Update user's state to 'AWAITING_EMAIL'
-    update_user_conversation_state(user_id, "AWAITING_EMAIL")
-
-    # Include cancel button
-    keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_registration")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Prompt the user to enter their email
-    await query.edit_message_text(
-        text="Please enter your email address. It should be either '@ehu.lt' or '@student.ehu.lt'.",
-        reply_markup=reply_markup,
-    )
-
-    return AWAITING_EMAIL
 
 
 async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler for receiving the email."""
     user_id = update.message.from_user.id
     email = update.message.text.strip()
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
     logging.info(f"User {user_id} entered email: {email}")
 
     # Check if the email belongs to the allowed domains
@@ -238,11 +223,11 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         logging.warning(f"Invalid email entered by user {user_id}: {email}")
 
         # Include cancel button
-        keyboard = [[InlineKeyboardButton("Cancel", callback_data='cancel_registration')]]
+        keyboard = [[InlineKeyboardButton(msgs["cancel_button"], callback_data='cancel_registration')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "Invalid email! Please make sure your email is either '@ehu.lt' or '@student.ehu.lt'. Try again.",
+            msgs["invalid_email"],
             reply_markup=reply_markup
         )
         return AWAITING_EMAIL
@@ -258,7 +243,7 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except Exception as e:
         logging.exception(f"Exception updating user {user_id} in the database")
         await update.message.reply_text(
-            "There was an error updating your information. Please try again later."
+            msgs["error_processing"]
         )
         return ConversationHandler.END
 
@@ -269,13 +254,13 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
         # Add buttons to resend the verification code and cancel
         keyboard = [
-            [InlineKeyboardButton("Resend verification email", callback_data='resend_verification')],
-            [InlineKeyboardButton("Cancel", callback_data='cancel_registration')]
+            [InlineKeyboardButton(msgs["resend_verification"], callback_data='resend_verification')],
+            [InlineKeyboardButton(msgs["cancel_button"], callback_data='cancel_registration')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            f"Verification code sent to {email}. Please check your email and enter the code here.",
+            msgs["verification_sent"].format(email=email),
             reply_markup=reply_markup
         )
         return AWAITING_VERIFICATION_CODE
@@ -283,7 +268,7 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except Exception as e:
         logging.exception(f"Error sending verification email to {email}")
         await update.message.reply_text(
-            "There was an error sending the verification email. Please try again later."
+            msgs["error_processing"]
         )
         return ConversationHandler.END
 
@@ -292,12 +277,14 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     """Handler for verifying the code."""
     user_id = update.message.from_user.id
     entered_code = update.message.text.strip()
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Get the correct code from the database
     correct_code = get_verification_code(user_id)
 
     if correct_code is None:
-        await update.message.reply_text("There was an issue retrieving your verification code. Please try again later.")
+        await update.message.reply_text(msgs["error_processing"])
         return ConversationHandler.END
 
     if entered_code == str(correct_code):
@@ -305,19 +292,19 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         update_user_conversation_state(user_id, 'VERIFIED')
 
         await update.message.reply_text(
-            "Your email has been verified! You can now use the bot.",
+            msgs["verified"],
         )
         return VERIFIED
     else:
         # Incorrect code
         keyboard = [
-            [InlineKeyboardButton("Resend verification email", callback_data='resend_verification')],
-            [InlineKeyboardButton("Cancel", callback_data='cancel_registration')]
+            [InlineKeyboardButton(msgs["resend_verification"], callback_data='resend_verification')],
+            [InlineKeyboardButton(msgs["cancel_button"], callback_data='cancel_registration')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "Incorrect code. Please try again or click the button below to resend the verification email.",
+            msgs["incorrect_code"],
             reply_markup=reply_markup
         )
         return AWAITING_VERIFICATION_CODE
@@ -327,6 +314,8 @@ async def resend_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handler for resending the verification email."""
     query = update.callback_query
     user_id = query.from_user.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     await query.answer()
 
@@ -339,7 +328,7 @@ async def resend_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if conversation_state == 'VERIFIED':
         # User is already verified
-        await query.edit_message_text("You're verified and can continue using the bot.")
+        await query.edit_message_text(msgs["verified"])
         return ConversationHandler.END
     else:
         try:
@@ -351,8 +340,8 @@ async def resend_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             # Keep the same buttons
             keyboard = [
-                [InlineKeyboardButton("Resend verification email", callback_data='resend_verification')],
-                [InlineKeyboardButton("Cancel", callback_data='cancel_registration')]
+                [InlineKeyboardButton(msgs["resend_verification"], callback_data='resend_verification')],
+                [InlineKeyboardButton(msgs["cancel_button"], callback_data='cancel_registration')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -363,7 +352,7 @@ async def resend_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.edit_message_text(
                 chat_id=query.message.chat_id,
                 message_id=query.message.message_id,
-                text=f"The verification code has been resent to {email} at {timestamp}. Please check your email.",
+                text=msgs["verification_resent"].format(email=email, timestamp=timestamp),
                 reply_markup=reply_markup
             )
 
@@ -371,7 +360,7 @@ async def resend_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
             logging.exception("Exception in resend_verification handler")
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="Failed to resend verification email. Please try again later."
+                text=msgs["failed_resend"]
             )
             return ConversationHandler.END
 
@@ -382,6 +371,8 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handler for canceling the registration."""
     query = update.callback_query
     user_id = query.from_user.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Reset the user's registration data
     reset_user_registration(user_id)
@@ -389,16 +380,16 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     # Send a message indicating that registration has been canceled
     await query.edit_message_text(
-        text="Registration has been canceled. To start again, please click the Register button.",
+        text=msgs["registration_canceled"],
     )
 
     # Send the initial registration prompt with the Register button
-    keyboard = [[InlineKeyboardButton("Register", callback_data='register')]]
+    keyboard = [[InlineKeyboardButton(msgs["register_button"], callback_data='register')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Welcome! You need to register before using the bot. Please click the button below to register.",
+        text=msgs["register_prompt"],
         reply_markup=reply_markup
     )
     return STARTED
@@ -408,12 +399,14 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler for the /menu command."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Check if user is registered and verified
     if not user_exists(user_id):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Hi, it looks like you are new here. Use the /start command or just write something to register first.",
+            text=msgs["not_registered"],
         )
         return None
 
@@ -422,22 +415,22 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if conversation_state in ("STARTED", "AWAITING_EMAIL", "AWAITING_VERIFICATION_CODE"):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please complete your registration first.",
+            text=msgs["complete_registration"],
         )
         return None
 
     # Include buttons to change topic and side
     keyboard = [
         [
-            InlineKeyboardButton("Change Topic", callback_data="change_topic"),
-            InlineKeyboardButton("Change Side", callback_data="change_side"),
+            InlineKeyboardButton(msgs["change_topic_button"], callback_data="change_topic"),
+            InlineKeyboardButton(msgs["change_side_button"], callback_data="change_side"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text="Please choose an option:",
+        text=msgs["choose_option"],
         reply_markup=reply_markup,
     )
 
@@ -448,6 +441,8 @@ async def handle_verified_text(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle text messages in VERIFIED state."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Check if user has set topic and side
     user_info = get_user_debate_info(user_id)
@@ -456,30 +451,32 @@ async def handle_verified_text(update: Update, context: ContextTypes.DEFAULT_TYP
         update_user_conversation_state(user_id, 'CHAT_GPT')
         await context.bot.send_message(
             chat_id=chat_id,
-            text="You're all set! You can now start the debate."
+            text=msgs["debate_ready"]
         )
         return CHAT_GPT
     else:
         # Prompt the user to set topic and side
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please set your debate topic and side using the /menu command."
+            text=msgs["set_topic_side"]
         )
         return VERIFIED
-    
+
 
 async def change_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler to change the debate topic."""
     query = update.callback_query
     user_id = query.from_user.id
     chat_id = query.message.chat_id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     await query.answer()
 
     if not user_exists(user_id):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Hi, it looks like you are new here. Use the /start command or just write something to register first.",
+            text=msgs["not_registered"],
         )
         return None
 
@@ -488,7 +485,7 @@ async def change_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if conversation_state in ("STARTED", "AWAITING_EMAIL", "AWAITING_VERIFICATION_CODE"):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please complete your registration first.",
+            text=msgs["complete_registration"],
         )
         return None
 
@@ -498,13 +495,13 @@ async def change_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     update_user_conversation_state(user_id, "AWAITING_DEBATE_TOPIC")
 
     # Include cancel button
-    keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_change_topic")]]
+    keyboard = [[InlineKeyboardButton(msgs["cancel_button"], callback_data="cancel_change_topic")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Prompt the user to enter the debate topic
     await context.bot.send_message(
         chat_id=chat_id,
-        text="Please enter the debate topic.",
+        text=msgs["topic_prompt"],
         reply_markup=reply_markup,
     )
 
@@ -516,6 +513,8 @@ async def receive_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     topic = update.message.text.strip()
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     user_info = get_user_debate_info(user_id)
     # Update the topic in the database
@@ -528,16 +527,16 @@ async def receive_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     # Include cancel button
     keyboard = [
-        [InlineKeyboardButton("For", callback_data='for')],
-        [InlineKeyboardButton("Against", callback_data='against')],
-        [InlineKeyboardButton("Cancel", callback_data='cancel_change_topic')]
+        [InlineKeyboardButton(msgs["for_button"], callback_data='for')],
+        [InlineKeyboardButton(msgs["against_button"], callback_data='against')],
+        [InlineKeyboardButton(msgs["cancel_button"], callback_data='cancel_change_topic')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Ask the user to choose a side (For/Against)
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"Topic is '{topic}'. Please choose your side.",
+        text=msgs["topic_set"].format(topic=topic),
         reply_markup=reply_markup
     )
 
@@ -549,13 +548,15 @@ async def change_side_entry_point(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     user_id = query.from_user.id
     chat_id = query.message.chat_id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     await query.answer()
 
     if not user_exists(user_id):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Hi, it looks like you are new here. Use the /start command or just write something to register first.",
+            text=msgs["not_registered"],
         )
         return None
 
@@ -564,7 +565,7 @@ async def change_side_entry_point(update: Update, context: ContextTypes.DEFAULT_
     if conversation_state in ("STARTED", "AWAITING_EMAIL", "AWAITING_VERIFICATION_CODE"):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please complete your registration first.",
+            text=msgs["complete_registration"],
         )
         return None
 
@@ -575,16 +576,16 @@ async def change_side_entry_point(update: Update, context: ContextTypes.DEFAULT_
 
     # Include cancel button
     keyboard = [
-        [InlineKeyboardButton("For", callback_data="for")],
-        [InlineKeyboardButton("Against", callback_data="against")],
-        [InlineKeyboardButton("Cancel", callback_data="cancel_change_side")],
+        [InlineKeyboardButton(msgs["for_button"], callback_data="for")],
+        [InlineKeyboardButton(msgs["against_button"], callback_data="against")],
+        [InlineKeyboardButton(msgs["cancel_button"], callback_data="cancel_change_side")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Prompt the user to choose a side
     await context.bot.send_message(
         chat_id=chat_id,
-        text="Please choose your side.",
+        text=msgs["side_prompt"],
         reply_markup=reply_markup,
     )
 
@@ -595,6 +596,8 @@ async def cancel_change_topic(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handler to cancel changing the topic."""
     query = update.callback_query
     user_id = query.from_user.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Retrieve the previous state
     previous_state = context.user_data.get("previous_state", "VERIFIED")
@@ -604,11 +607,11 @@ async def cancel_change_topic(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await query.answer()
     # Send a message indicating that the topic change has been canceled
-    await query.edit_message_text(text="Topic change has been canceled.")
+    await query.edit_message_text(text=msgs["topic_change_canceled"])
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="You can continue using the bot.",
+        text=msgs["continue_using_bot"],
     )
 
     # Map state strings to constants
@@ -621,6 +624,8 @@ async def cancel_change_side(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handler to cancel changing the side."""
     query = update.callback_query
     user_id = query.from_user.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Retrieve the previous state
     previous_state = context.user_data.get("previous_state", "CHAT_GPT")
@@ -630,11 +635,11 @@ async def cancel_change_side(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.answer()
     # Send a message indicating that the side change has been canceled
-    await query.edit_message_text(text="Side change has been canceled.")
+    await query.edit_message_text(text=msgs["side_change_canceled"])
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="You can continue using the bot.",
+        text=msgs["continue_using_bot"],
     )
 
     # Map state strings to constants
@@ -650,12 +655,14 @@ async def select_side(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     side = query.data  # 'for' or 'against'
 
     chat_id = update.effective_chat.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     if side in ['for', 'against']:
         if not user_exists(user_id):
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Hi, it looks like you are new here. Use the /start command or just write something to register first."
+                text=msgs["not_registered"]
             )
             return None
 
@@ -669,7 +676,7 @@ async def select_side(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
         await query.answer()
         await query.edit_message_text(
-            text=f"Side set to '{side}'. You can now start the debate!"
+            text=msgs["side_set"].format(side=side)
         )
         update_user_conversation_state(user_id, 'CHAT_GPT')
         return CHAT_GPT
@@ -677,7 +684,7 @@ async def select_side(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     else:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Invalid selection. Please choose 'For' or 'Against'."
+            text=msgs["invalid_selection"]
         )
         return AWAITING_DEBATE_SIDE
 
@@ -687,12 +694,14 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     user_message = update.message.text.strip()
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
 
     # Check if the user is registered and in CHAT_GPT state
     if not user_exists(user_id):
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Hi, it looks like you are new here. Use the /start command or just write something to register first.",
+            text=msgs["not_registered"],
         )
         return None
 
@@ -701,7 +710,7 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if conversation_state != "CHAT_GPT":
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please finish registration and set your debate topic and side first.",
+            text=msgs["finish_registration"],
         )
         return None
 
@@ -709,7 +718,7 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not user_info:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please set your debate topic and side.",
+            text=msgs["set_topic_side"],
         )
         return None
 
@@ -717,7 +726,7 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not topic or not side:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Please set your debate topic and side.",
+            text=msgs["set_topic_side"],
         )
         return None
 
@@ -736,6 +745,8 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     # Get the prompt and model from the config
     prompt_template = config.get('PROMPT', '')
+    print(f"Prompt template: {prompt_template}")  # Debug print statement
+
     gpt_model = config.get('GPT_MODEL', '')
 
     # Format the prompt with debate_topic and debate_side
@@ -772,10 +783,115 @@ async def gpt_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     except Exception as e:
         logging.exception("Error during GPT reply")
         await context.bot.send_message(
-            chat_id=chat_id, text="Sorry, there was an error processing your request."
+            chat_id=chat_id, text=msgs["error_processing"]
         )
 
     return CHAT_GPT
+
+
+async def change_language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handler for the /language command to change the user's language preference."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # Retrieve user's current conversation state
+    conversation_state = get_conversation_state(user_id)
+    if conversation_state is None:
+        conversation_state = 'STARTED'
+
+    # Store the previous state in user_data
+    context.user_data['previous_state'] = conversation_state
+
+    # Prompt the user to select a language
+    keyboard = [
+        [InlineKeyboardButton("English", callback_data="language_en")],
+        [InlineKeyboardButton("Русский", callback_data="language_ru")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Please choose your language:\nПожалуйста, выберите язык:",
+        reply_markup=reply_markup,
+    )
+    # Return the current state to stay in the conversation
+    return STATE_MAP.get(conversation_state, STARTED)
+
+
+async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handler for selecting language preference."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = update.effective_chat.id
+    data = query.data  # 'language_en' or 'language_ru'
+
+    await query.answer()
+
+    # Determine the selected language
+    if data == 'language_en':
+        language = 'en'
+    elif data == 'language_ru':
+        language = 'ru'
+    else:
+        # Invalid selection
+        return ConversationHandler.END
+
+    # Update user's language in the database
+    update_user_language(user_id, language)
+
+    # Load messages in the selected language
+    msgs = load_messages(language)
+
+    # Now inform the user
+    msg = msgs['language_changed']
+    await query.edit_message_text(
+        text=msg,
+    )
+
+    # Get the user's conversation state from the database
+    conversation_state = get_conversation_state(user_id)
+    # Check if the user is registered
+    if conversation_state == "STARTED":
+            # User already started but not registered
+            keyboard = [[InlineKeyboardButton(msgs["register_button"], callback_data="register")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=msgs["register_prompt"],
+                reply_markup=reply_markup,
+            )
+            return STARTED
+    
+    # Retrieve previous state
+    previous_state = context.user_data.get('previous_state', 'STARTED')
+    # Return to the previous state
+    return STATE_MAP.get(previous_state, STARTED)
+
+
+async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handler for the registration process."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    language = get_user_language(user_id)
+    msgs = load_messages(language)
+
+    await query.answer()
+
+    # Update user's state to 'AWAITING_EMAIL'
+    update_user_conversation_state(user_id, "AWAITING_EMAIL")
+
+    # Include cancel button
+    keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_registration")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Prompt the user to enter their email
+    await query.edit_message_text(
+        text=msgs["enter_email_prompt"],
+        reply_markup=reply_markup,
+    )
+
+    return AWAITING_EMAIL
 
 
 async def delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
